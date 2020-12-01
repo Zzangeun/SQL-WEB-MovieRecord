@@ -1,3 +1,0 @@
-# conflict_practice
-
-A
