@@ -1,13 +1,11 @@
 var http = require('http');
 var url = require('url');
 var qs = require('querystring');
-var movie = require('./lib/movie');
-var record = require('./lib/record');
 var sanitizeHtml = require('sanitize-html');
 var db = require('./lib/db');
 var template = require('./lib/template.js');
 var dateUtils = require('date-utils');
-const { SSL_OP_SSLEAY_080_CLIENT_DH_BUG } = require('constants');
+const { SSL_OP_SSLEAY_080_CLIENT_DH_BUG, DH_CHECK_P_NOT_PRIME } = require('constants');
 
 var userStatus = '';
 
@@ -17,18 +15,85 @@ var app = http.createServer(function(request,response){
   var pathname = url.parse(_url, true).pathname;
 
   if(pathname === '/'){   //메인페이지
-    db.query(`SELECT * FROM movie`, function(error,movies){
-      var title = 'Welcome';
-      var description = 'Hello, Node.js';
-      var list = template.movie_list(movies);
-      var html = template.HTML(title, list,
-        `<h2>${title}</h2>${description}`,
-        ``,
-        userStatus
-      );
-      response.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
-      response.end(html);
-    });
+    if(userStatus == ''){     //랜덤 추출 select cid from restaurant order by rand() limit 10
+      db.query(`SELECT * FROM MOVIE ORDER BY RAND() LIMIT 5`, function(error, movies){
+        db.query(`SELECT * FROM MOVIE ORDER BY M_AvgGrade DESC LIMIT 5`, function(error3, movies2){
+          var title = 'Welcome';
+          var description = 'Hello, Node.js';
+          var list = template.movie_list(movies);
+          var list2 = template.movie_list(movies2);
+          var html = template.HTML(title, '',
+            `
+            <h2>${title}</h2>${description}
+            ${list}
+            ${list2}
+            `,
+            ``,
+            userStatus
+          );
+          response.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
+          response.end(html);
+        });
+      });
+    }
+    else{     //관심장르중에 랜덤 추출
+      db.query(`SELECT G_ID FROM INTEREST WHERE U_ID = ?`, [userStatus], function(error2, interest){
+        if(interest == ''){
+          db.query(`SELECT * FROM MOVIE ORDER BY RAND() LIMIT 5`, function(error, movies){
+            db.query(`SELECT * FROM MOVIE ORDER BY M_AvgGrade DESC LIMIT 5`, function(error3, movies2){
+              var title = 'Welcome';
+              var description = 'Hello, Node.js';
+              var list = template.movie_list(movies);
+              var list2 = template.movie_list(movies2);
+              var html = template.HTML(title, '',
+                `
+                <h2>${title}</h2>${description}
+                ${list}
+                ${list2}
+                `,
+                ``,
+                userStatus
+              );
+              response.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
+              response.end(html);
+            });
+          });
+        }
+        else{
+          var q = `WHERE `;
+          var i = 0;
+          q = q + `G_ID = '${interest[i].G_ID}'`;
+          i = i + 1;
+          while(i < interest.length){
+            q = q + ` OR G_ID = '${interest[i].G_ID}'`;
+            i = i + 1;
+          }
+          db.query(`
+                SELECT * FROM MOVIE INNER JOIN BELONG ON MOVIE.M_ID = BELONG.M_ID ${q} ORDER BY RAND() LIMIT 5
+                `, 
+                function(error, movies){
+                  db.query(`SELECT * FROM MOVIE ORDER BY M_AvgGrade DESC LIMIT 5`, function(error3, movies2){
+                    var title = 'Welcome';
+                    var description = 'Hello, Node.js';
+                    var list = template.movie_list(movies);
+                    var list2 = template.movie_list(movies2);
+                    var html = template.HTML(title, '',
+                      `
+                      <h2>${title}</h2>${description}
+                      ${list}
+                      ${list2}
+                      `,
+                      ``,
+                      userStatus
+                    );
+                    response.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
+                    response.end(html);
+                  });
+                }
+          );
+        }
+      });
+    }
   } 
   else if(pathname === '/search'){    //검색 페이지
     var title = '검색';
@@ -56,7 +121,7 @@ var app = http.createServer(function(request,response){
     });
     request.on('end', function(){
       var post = qs.parse(body);
-      db.query(`SELECT * FROM MOVIE WHERE M_Name LIKE ? OR M_Director LIKE ?`, ['%'+post.search+'%', '%'+post.search+'%'], function(error, movies){
+      db.query(`SELECT * FROM MOVIE WHERE M_Name LIKE ? OR M_Director LIKE ? ORDER BY M_Name`, ['%'+post.search+'%', '%'+post.search+'%'], function(error, movies){
           if(error){
             throw error;
           }
@@ -87,11 +152,11 @@ var app = http.createServer(function(request,response){
       });
     });
   }
-  else if(pathname === '/movie'){     //장르별 모아보기 페이지
+  else if(pathname === '/movie'){     //장르별 모아보기 페이지 (여기까지 order by 완료)
     if(queryData.id === undefined){
       if(queryData.category === undefined){
-        db.query(`SELECT * FROM MOVIE`, function(error, movies){
-          db.query(`SELECT * FROM GENRE`, function(error2, genres){
+        db.query(`SELECT * FROM MOVIE ORDER BY M_Name`, function(error, movies){
+          db.query(`SELECT * FROM GENRE ORDER BY G_ID`, function(error2, genres){
             var title = '장르별 모아보기';
             var description = '';
             var list_m = template.movie_list(movies);
@@ -110,8 +175,8 @@ var app = http.createServer(function(request,response){
         });
       }
       else{
-        db.query(`SELECT * FROM MOVIE INNER JOIN BELONG ON MOVIE.M_ID = BELONG.M_ID WHERE BELONG.G_ID = ?`, [queryData.category], function(error,movies){
-          db.query(`SELECT * FROM GENRE`, function(error2, genres){
+        db.query(`SELECT * FROM MOVIE INNER JOIN BELONG ON MOVIE.M_ID = BELONG.M_ID WHERE BELONG.G_ID = ? ORDER BY M_Name`, [queryData.category], function(error,movies){
+          db.query(`SELECT * FROM GENRE ORDER BY G_ID`, function(error2, genres){
             var title = '장르별 모아보기';
             var description = '';
             var list_m = template.movie_list(movies);
@@ -131,11 +196,11 @@ var app = http.createServer(function(request,response){
       }
     }
     else {
-      db.query(`SELECT * FROM MOVIE WHERE M_ID = ?`, [queryData.id], function(error,movie){
+      db.query(`SELECT * FROM MOVIE WHERE M_ID = ? ORDER BY M_Name`, [queryData.id], function(error,movie){
         var title = movie[0].M_Name;
         var description = '';
         
-        db.query(`SELECT * FROM RECORD WHERE M_ID = ?`, [queryData.id], function(error2, records){
+        db.query(`SELECT * FROM RECORD WHERE M_ID = ? ORDER BY R_Date DESC`, [queryData.id], function(error2, records){
           var list = template.one_eval_list(records);
           var movie_detail = template.movie_detail(movie);
           var html = template.HTML(title, list, movie_detail,
@@ -307,7 +372,7 @@ var app = http.createServer(function(request,response){
             <input type="hidden" name="id" value="${queryData.uid}"/>
             <input type="hidden" name="movie" value="${queryData.mid}"/>
             평점 : <br>
-            <p><input oninput='ShowSliderValue(this.value)' type="range" name="grade" min="0" max="5" step="0.5" value"${record[0].R_Grade}" />
+            <p><input oninput='ShowSliderValue(this.value)' type="range" name="grade" min="0" max="5" step="0.5" value="${record[0].R_Grade}" />
             <font size=4 id = "slider_value_view">${record[0].R_Grade}</font></p>
             한줄평 : <br>
             <p>
@@ -522,20 +587,13 @@ var app = http.createServer(function(request,response){
                 }
               }
             );
-            var i = 0;
+            var i = 1;
             while(i < post.genre.length){
-              db.query(
-                `
-                INSERT INTO INTEREST (U_ID, G_ID) 
-                VALUES(?, ?)
-                `,
-                [post.id, post.genre[i]], 
-                function(error2, result2){
-                  if(error2){
-                    throw error2;
-                  }
+              db.query(`INSERT INTO INTEREST (U_ID, G_ID) VALUES(?, ?)`, [post.id, post.genre[i]], function(error2, result2){
+                if(error2){
+                  throw error2;
                 }
-              );
+              });
               i = i + 1;
             }
             response.writeHead(302, {Location: `/login`, 'Content-Type':'text/html; charset=utf-8'});
@@ -659,8 +717,8 @@ var app = http.createServer(function(request,response){
           throw error2;
         }
       });
-      var i = 0;
-      while(i < post.genre.length){
+      var i = 1;
+      while(i < (post.genre.length)){
         db.query(
           `
           INSERT INTO INTEREST (U_ID, G_ID) 
